@@ -13,9 +13,12 @@
 #   SGLANG_V100_HOST=0.0.0.0  SGLANG_V100_PORT=11435   (shared with the other V100 scripts)
 #   GLM53_GPUS=0,1,2,3,4,5,6,7
 #   GLM53_MTP_STEPS=3          (0 turns MTP off)
+#   GLM53_LANGUAGE_ONLY=0      (1 skips the vision tower for the text-only recipe)
+#   GLM53_MAX_IMAGE_TOKENS=1024 (bounds SDPA vision memory per image)
+#   GLM53_MM_ATTENTION_BACKEND=sdpa
 #   GLM53_CONTEXT_LENGTH / GLM53_MEM_FRACTION   (defaults follow GLM53_MTP_STEPS)
 #   GLM53_KV_CACHE_DTYPE=fp8_e4m3   (default auto = FP16; fp8 roughly doubles the
-#                                    pool, so the context default scales with it)
+#                                    pool; the MTP context default scales with it)
 #   GLM53_MAX_RUNNING=1         (increase with Mamba slots for real batching)
 #   GLM53_MAMBA_SLOTS=12        (4-request batch needs at least 20 slots)
 #   GLM53_CUDA_GRAPH_BS_DECODE=1 (or use GLM53_EXTRA_ARGS for a list, e.g. 1 2 4)
@@ -34,6 +37,29 @@ VENV="${SGLANG_V100_VENV:-$HOME/sglang-v100-venv}"
 MODEL="${GLM53_MODEL:-}"
 [[ -n "$MODEL" ]] || { echo "set GLM53_MODEL to the GLM-5.3-Flash-NVFP4 checkout" >&2; exit 1; }
 [[ -f "$MODEL/config.json" ]] || { echo "no config.json at $MODEL" >&2; exit 1; }
+
+# Volta cannot run FA3/FA4. Use PyTorch SDPA for the existing GLM vision tower;
+# keep images bounded because SDPA's math backend materializes attention scores.
+# Text-only mode retains the original memory footprint and benchmark recipe.
+MM_ARGS=()
+case "${GLM53_LANGUAGE_ONLY:-0}" in
+  0)
+    # Older Transformers can silently load a tokenizer instead of this processor,
+    # accepting requests while discarding their image inputs.
+    "$VENV/bin/python" -c 'from transformers import Glm5NextProcessor' || {
+      echo "GLM-5.3-Flash vision requires Glm5NextProcessor; install the pinned requirements.txt (Transformers 5.17.0)." >&2
+      exit 1
+    }
+    MAX_IMAGE_TOKENS="${GLM53_MAX_IMAGE_TOKENS:-1024}"
+    [[ "$MAX_IMAGE_TOKENS" =~ ^[1-9][0-9]*$ ]] && [[ "$MAX_IMAGE_TOKENS" -ge 16 ]] || {
+      echo "GLM53_MAX_IMAGE_TOKENS must be an integer >= 16" >&2; exit 1;
+    }
+    MM_ARGS=(--mm-attention-backend "${GLM53_MM_ATTENTION_BACKEND:-sdpa}"
+      --mm-process-config "{\"image\":{\"max_image_tokens\":$MAX_IMAGE_TOKENS}}")
+    ;;
+  1) MM_ARGS=(--language-only) ;;
+  *) echo "GLM53_LANGUAGE_ONLY must be 0 or 1" >&2; exit 1 ;;
+esac
 
 export CUDA_VISIBLE_DEVICES="${GLM53_GPUS:-0,1,2,3,4,5,6,7}"
 export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
@@ -83,8 +109,9 @@ fi
 # MTP: GLM53_MTP_STEPS=N (default 3) drafts N tokens per step with the checkpoint's
 # layer 45; 0 turns it off. The draft's BF16 routed experts are quantized to NVFP4
 # at load (2.4 -> 1.06 GB per rank); verify still decides every token.
-# Context defaults stay below the KV pool each setting leaves (MTP 242880 at 0.935,
-# no MTP 225600 at 0.88), so prompt + completion always fits.
+# Text-only context defaults stay below the measured KV pools (MTP 242880 at
+# 0.935, no MTP 225600 at 0.88). Vision reserves additional weight/workspace memory;
+# its context defaults are selected separately below.
 # A running request pins 5 KDA state slots in the no-MTP path. The scheduler caps
 # max_running_requests at max_mamba_cache_size // 5, so a real batch of four needs
 # --max-mamba-cache-size 20. MTP uses a different, larger per-request footprint.
@@ -97,7 +124,7 @@ if [[ "$GLM53_MTP_STEPS" -gt 0 ]]; then
   MEM_FRACTION_DEFAULT=0.935
   CONTEXT_LENGTH_DEFAULT=240640
   if [[ "$GLM53_KV_CACHE_DTYPE" == "fp8_e4m3" ]]; then
-    # Measured on 8x V100-SXM2 with GLM-5.3-Flash-NVFP4: a 521,024-token pool at
+    # Text-only measurement on 8x V100-SXM2: a 521,024-token pool at
     # 0.945, so this context plus a completion always fits. FP16 tops out at
     # 290,240 tokens, which is why 240640 is the default above.
     MEM_FRACTION_DEFAULT=0.945
@@ -106,6 +133,19 @@ if [[ "$GLM53_MTP_STEPS" -gt 0 ]]; then
   SPEC_ARGS=(--speculative-algorithm EAGLE --speculative-draft-model-path "$MODEL"
     --speculative-num-steps "$GLM53_MTP_STEPS" --speculative-eagle-topk 1
     --speculative-num-draft-tokens "$((GLM53_MTP_STEPS + 1))")
+fi
+
+# Measured vision pools on 8x V100-SXM2: FP16 181760 tokens without MTP,
+# FP16 201280 with MTP, and FP8 E4M3 394752 with MTP. Keep the default context
+# below capacity instead of letting the scheduler silently cap the old text limit.
+if [[ "${GLM53_LANGUAGE_ONLY:-0}" == "0" ]]; then
+  CONTEXT_LENGTH_DEFAULT=178176
+  if [[ "$GLM53_MTP_STEPS" -gt 0 ]]; then
+    CONTEXT_LENGTH_DEFAULT=196608
+    if [[ "$GLM53_KV_CACHE_DTYPE" == "fp8_e4m3" ]]; then
+      CONTEXT_LENGTH_DEFAULT=384000
+    fi
+  fi
 fi
 
 # --sleep-on-idle: without it the eight idle scheduler loops keep ~5.3 cores
@@ -119,7 +159,7 @@ exec "$VENV/bin/python" -m sglang.launch_server \
   --dtype float16 \
   --quantization modelopt_fp4 \
   --fp4-gemm-backend marlin \
-  --language-only \
+  "${MM_ARGS[@]}" \
   --tensor-parallel-size 8 \
   --ep-size "${GLM53_EP_SIZE:-1}" \
   --attention-backend dsa \

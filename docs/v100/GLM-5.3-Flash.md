@@ -4,7 +4,7 @@ GLM-5.3-Flash on 8× V100-SXM2-32GB, set up for one agentic coding session: a ma
 
 ## Get the model
 
-The validated checkpoint is RadixArk's NVFP4 quantisation (ModelOpt). 190 GB. The MTP draft layer is in the same repo. The export carries a vision tower; this port serves text only (`--language-only`). The model is MIT-licensed.
+The validated checkpoint is RadixArk's NVFP4 quantisation (ModelOpt). 190 GB. The MTP draft layer is in the same repo. The export carries a vision tower, which the wrapper now loads by default for image inputs. Set `GLM53_LANGUAGE_ONLY=1` to skip it and use the original text-only recipe. The model is MIT-licensed.
 
 ```bash
 pip install -U "huggingface_hub[cli]"
@@ -38,9 +38,61 @@ The model reasons before it answers (`glm45` parser), and tool calls come back a
 
 The model has three reasoning efforts: Low, High and Max. The server reads `reasoning_effort` (OpenAI) or `output_config.effort` (Anthropic, which Claude Code's effort setting sends) and maps it as follows: `minimal`/`low` to Low, `medium`/`high` to High, and `xhigh`/`max` (or no effort) to Max. Claude Code's default is `xhigh`, so it runs at Max.
 
+## Image inputs
+
+Use the pinned Transformers 5.17.0 from `requirements.txt`. Older V100
+environments with Transformers 5.8.1 lack `Glm5NextProcessor` and can silently
+load a tokenizer that drops images. The wrapper checks for the vision processor
+before starting the server.
+
+The wrapper enables the existing GLM vision processor and tower with FP16
+activations and `--mm-attention-backend sdpa` on V100. It defaults to
+`GLM53_MAX_IMAGE_TOKENS=1024` per image to bound vision attention memory; the
+processor resizes larger images. You can raise this limit if you have memory
+available. The checkpoint's exclusion list keeps the vision tower unquantized.
+
+Send an OpenAI image URL or an inline PNG/JPEG data URL:
+
+```bash
+curl http://127.0.0.1:11435/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"glm53-flash-nvfp4","messages":[{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://raw.githubusercontent.com/sgl-project/sglang/main/examples/assets/example_image.png"}},{"type":"text","text":"Describe this image."}]}],"reasoning_effort":"low","max_tokens":2048}'
+```
+
+The Anthropic endpoint accepts image blocks with
+`"source":{"type":"base64","media_type":"image/png","data":"..."}` alongside
+text blocks. To check both endpoints against a running server:
+
+```bash
+python test/manual/test_glm53_flash_vision.py
+```
+
+Run that check with the default MTP recipe and again with
+`GLM53_MTP_STEPS=0`. On 2026-11-07, both modes passed on eight V100-SXM2-32GB
+GPUs: the OpenAI and Anthropic endpoints identified red and blue images,
+including a 1120×1120 image resized to the 1,024-token limit. The initial checks
+used an 8,192-token context and a 16,384-token KV pool. The checks also passed
+at the full memory settings below, including MTP with FP8 E4M3 KV.
+
+The wrapper uses separate vision context defaults that fit the measured pools:
+
+| Vision recipe | Memory fraction | Measured KV pool | Default context |
+|---|---:|---:|---:|
+| No MTP, FP16 KV | 0.88 | 181,760 | 178,176 |
+| MTP 3 steps, FP16 KV | 0.935 | 201,280 | 196,608 |
+| MTP 3 steps, FP8 E4M3 KV | 0.945 | 394,752 | 384,000 |
+
+These are allocation and image smoke checks, not long-context accuracy or
+throughput measurements. Recheck capacity if you change the memory fraction or
+Mamba slots. If image processing runs out of memory, lower
+`GLM53_MAX_IMAGE_TOKENS` or `GLM53_MEM_FRACTION`. Use
+`GLM53_LANGUAGE_ONLY=1` to retain the original text-only context defaults.
+
 ## Measured performance
 
-The reference recipe below: TP=8, MTP 3 steps / 4 draft tokens, `--max-running-requests 1`, temperature 0. KV pool 242,880 tokens, context 240,640.
+These measurements used text-only mode (`GLM53_LANGUAGE_ONLY=1`).
+
+The measured text-only recipe: TP=8, MTP 3 steps / 4 draft tokens, `--max-running-requests 1`, temperature 0. KV pool 242,880 tokens, context 240,640.
 
 **Decode** (2026-10-06). Six chat prompts, 512 tokens each, streamed from `/generate`; tok/s excludes TTFT. Accept length is tokens per target forward.
 
@@ -74,7 +126,7 @@ The reference recipe below: TP=8, MTP 3 steps / 4 draft tokens, `--max-running-r
 
 ## Reference recipe
 
-The wrapper is the supported entry and the recipe the numbers above were measured on. It defaults to MTP with 3 steps; `GLM53_MTP_STEPS=0` turns MTP off and switches the memory and context defaults to the no-MTP values below.
+The wrapper is the supported entry. The numbers above were measured with `GLM53_LANGUAGE_ONLY=1`; the current default also loads vision. It defaults to MTP with 3 steps; `GLM53_MTP_STEPS=0` turns MTP off and switches the memory and context defaults to the no-MTP values below.
 
 ```bash
 export GLM53_MODEL=~/models/GLM-5.3-Flash-NVFP4
@@ -90,6 +142,7 @@ capture graph batch sizes 1, 2, and 4 together.
 
 ```bash
 export GLM53_MODEL=~/models/GLM-5.3-Flash-NVFP4
+export GLM53_LANGUAGE_ONLY=1
 export GLM53_MTP_STEPS=0
 export GLM53_KV_CACHE_DTYPE=fp8_e4m3
 export GLM53_CONTEXT_LENGTH=256000
@@ -114,7 +167,7 @@ sessions matter more than four-way capacity: use `GLM53_MTP_STEPS=1`,
 aggregate. MTP 2 or 3 steps measured about 55-60 tok/s with two simultaneous
 requests, so the default MTP=3 profile is not the high-concurrency choice.
 
-Expanded (what that script runs with MTP). The env block is not implied by the CLI flags: it turns on the Volta decode kernels and the two-level all-reduce.
+Expanded (the default vision-enabled launch with MTP). The env block is not implied by the CLI flags: it turns on the Volta decode kernels and the two-level all-reduce.
 
 ```bash
 export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
@@ -145,7 +198,8 @@ python -m sglang.launch_server \
   --dtype float16 \
   --quantization modelopt_fp4 \
   --fp4-gemm-backend marlin \
-  --language-only \
+  --mm-attention-backend sdpa \
+  --mm-process-config '{"image":{"max_image_tokens":1024}}' \
   --tensor-parallel-size 8 \
   --ep-size 1 \
   --attention-backend dsa \
@@ -159,11 +213,11 @@ python -m sglang.launch_server \
   --mamba-max-states-per-path 2 \
   --mamba-full-memory-ratio 0.15 \
   --mamba-radix-cache-strategy extra_buffer \
-  --chunked-prefill-size 2048 \
-  --max-prefill-tokens 2048 \
+  --chunked-prefill-size 4096 \
+  --max-prefill-tokens 4096 \
   --warmups prefix_reuse,sampling \
   --sleep-on-idle \
-  --context-length 240640 \
+  --context-length 196608 \
   --mem-fraction-static 0.935 \
   --speculative-algorithm EAGLE \
   --speculative-draft-model-path "${GLM53_MODEL}" \
@@ -180,20 +234,19 @@ python -m sglang.launch_server \
 | draft experts | NVFP4 at load (`SGLANG_NVFP4_CKPT_NVFP4_NEXTN_MOE=1`) | Draft weights 2.4 → 1.06 GB per rank, which buys KV pool, and acceptance is the same as the BF16 draft |
 | `--ep-size` | 1 | Experts TP-sliced: every rank does the same MoE work per token. With EP=8 the other ranks waited for the one holding most routes |
 | `--max-running-requests` | 1 by default; 4 in the no-MTP profile | Four requests require the Mamba state pool and graph batch sizes to be raised together |
-| `--mem-fraction-static` | 0.935 | Leaves a 242,880-token KV pool. Without MTP use 0.88 (225,600-token pool) |
-| `--context-length` | 240,640 | Kept below the pool so prompt plus completion always fits. Without MTP use 223,232 |
+| `--mem-fraction-static` | 0.935 | Vision: 201,280-token KV pool; text-only: 242,880. Without MTP use 0.88 |
+| `--context-length` | 196,608 with vision; 240,640 text-only | Kept below the pool. Without MTP: 178,176 with vision; 223,232 text-only |
 | `--max-mamba-cache-size` / `--mamba-max-states-per-path` | 12 / 2 by default; 20 / 2 for real batch 4 | In the no-MTP path the scheduler caps requests at `max_mamba_cache_size // 5`; 12 therefore silently caps four-request settings at 2 |
-| prefill chunk | 2048 | The measured value. Larger chunks have not been tried with the memory a 0.935 pool leaves |
+| prefill chunk | 4096 | Wrapper default; the older text-only benchmarks above used 2048 |
 | `--warmups prefix_reuse,sampling` | on | Loads the kernels of a cache hit and a grammar-constrained decode at startup, and builds FlashInfer's sampling module. Otherwise they load on the first real tool turn, when little memory is free, and the first sampled request waits for the build |
 | `--sleep-on-idle` | on | Without it the eight idle scheduler loops keep about 5 CPU cores busy. Decode speed is the same either way |
 | `--disable-custom-all-reduce` + `SGLANG_DSV41_HIER_AR*` | on | The 8-GPU mesh is two NVLink quads plus bridges. Custom all-reduce inside each quad, then across the bridge pair |
 
-Without MTP (`GLM53_MTP_STEPS=0` in the wrapper): drop the five `--speculative-*` lines and `SGLANG_NVFP4_CKPT_NVFP4_NEXTN_MOE`, and use `--mem-fraction-static 0.88 --context-length 223232`.
+Without MTP (`GLM53_MTP_STEPS=0` in the wrapper): drop the five `--speculative-*` lines and `SGLANG_NVFP4_CKPT_NVFP4_NEXTN_MOE`, and use `--mem-fraction-static 0.88 --context-length 178176` with vision, or context 223232 in text-only mode.
 
 ## Limitations
 
 - The default recipe is one request at a time. Use the high-concurrency profile above for real batch-4 decode.
-- Text only (`--language-only`).
 - A fresh subagent conversation pays its own cold prefill (about 10 s at 20k tokens).
 - The first request with a new set of tools compiles its tool-call grammar, about 7 s once per tool set.
 - Checked with the benchmarks above and GSM8K (0.923 over 1,319 questions with MTP, on an earlier build of this recipe). No multi-hour soak yet.
