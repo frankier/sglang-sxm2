@@ -113,6 +113,7 @@ from sglang.srt.runtime_context import (
     get_lora,
     get_mm,
     get_parallel,
+    get_platform,
     get_spec,
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
@@ -266,6 +267,7 @@ class Glm5NextVisionModel(GlmOcrVisionModel):
         self.out_hidden_size = vision_config.out_hidden_size
         self.intermediate_size = vision_config.intermediate_size
         self.use_data_parallel = use_data_parallel
+        self.serialize_frames = get_platform().is_sm70
 
         self.patch_embed = GlmOcrVisionPatchEmbed(
             patch_size=vision_config.patch_size,
@@ -328,6 +330,28 @@ class Glm5NextVisionModel(GlmOcrVisionModel):
         self.post_layernorm = GlmOcrRMSNorm(
             vision_config.hidden_size, eps=vision_config.rms_norm_eps
         )
+
+    def forward(self, x: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
+        if not self.serialize_frames:
+            return super().forward(x, grid_thw)
+        # Attention is frame-local, as are patch embedding, norms and the
+        # merger. Stage only one frame on Volta so packed images do not multiply
+        # the encoder's activation peak. Keep the original pixels and ordering.
+        frames = [
+            (height, width)
+            for temporal, height, width in grid_thw.tolist()
+            for _ in range(temporal)
+        ]
+        if sum(height * width for height, width in frames) != x.shape[0]:
+            raise ValueError("Vision grid does not match the number of image patches")
+        offset = 0
+        outputs = []
+        for height, width in frames:
+            count = height * width
+            grid = grid_thw.new_tensor([[1, height, width]])
+            outputs.append(super().forward(x[offset : offset + count], grid))
+            offset += count
+        return torch.cat(outputs, dim=0)
 
 
 class Glm5NextLinearAttention(nn.Module):

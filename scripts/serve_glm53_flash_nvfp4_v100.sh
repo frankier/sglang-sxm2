@@ -14,7 +14,8 @@
 #   GLM53_GPUS=0,1,2,3,4,5,6,7
 #   GLM53_MTP_STEPS=3          (0 turns MTP off)
 #   GLM53_LANGUAGE_ONLY=0      (1 skips the vision tower for the text-only recipe)
-#   GLM53_MAX_IMAGE_TOKENS=1024 (bounds SDPA vision memory per image)
+#   GLM53_MAX_IMAGE_TOKENS=8000 (checkpoint-native budget, no resolution reduction)
+#   GLM53_MAX_IMAGES=4         (reject larger image packs before TP dispatch)
 #   GLM53_MM_ATTENTION_BACKEND=sdpa
 #   GLM53_CONTEXT_LENGTH / GLM53_MEM_FRACTION   (defaults follow GLM53_MTP_STEPS)
 #   GLM53_KV_CACHE_DTYPE=fp8_e4m3   (default auto = FP16; fp8 roughly doubles the
@@ -39,7 +40,7 @@ MODEL="${GLM53_MODEL:-}"
 [[ -f "$MODEL/config.json" ]] || { echo "no config.json at $MODEL" >&2; exit 1; }
 
 # Volta cannot run FA3/FA4. Use PyTorch SDPA for the existing GLM vision tower;
-# keep images bounded because SDPA's math backend materializes attention scores.
+# packed SDPA bounds query scores and processes frames independently.
 # Text-only mode retains the original memory footprint and benchmark recipe.
 MM_ARGS=()
 case "${GLM53_LANGUAGE_ONLY:-0}" in
@@ -50,12 +51,17 @@ case "${GLM53_LANGUAGE_ONLY:-0}" in
       echo "GLM-5.3-Flash vision requires Glm5NextProcessor; install the pinned requirements.txt (Transformers 5.17.0)." >&2
       exit 1
     }
-    MAX_IMAGE_TOKENS="${GLM53_MAX_IMAGE_TOKENS:-1024}"
+    MAX_IMAGE_TOKENS="${GLM53_MAX_IMAGE_TOKENS:-8000}"
     [[ "$MAX_IMAGE_TOKENS" =~ ^[1-9][0-9]*$ ]] && [[ "$MAX_IMAGE_TOKENS" -ge 16 ]] || {
       echo "GLM53_MAX_IMAGE_TOKENS must be an integer >= 16" >&2; exit 1;
     }
+    MAX_IMAGES="${GLM53_MAX_IMAGES:-4}"
+    [[ "$MAX_IMAGES" =~ ^[1-9][0-9]*$ ]] || {
+      echo "GLM53_MAX_IMAGES must be a positive integer" >&2; exit 1;
+    }
     MM_ARGS=(--mm-attention-backend "${GLM53_MM_ATTENTION_BACKEND:-sdpa}"
-      --mm-process-config "{\"image\":{\"max_image_tokens\":$MAX_IMAGE_TOKENS}}")
+      --mm-process-config "{\"image\":{\"max_image_tokens\":$MAX_IMAGE_TOKENS}}"
+      --limit-mm-data-per-request "{\"image\":$MAX_IMAGES}")
     ;;
   1) MM_ARGS=(--language-only) ;;
   *) echo "GLM53_LANGUAGE_ONLY must be 0 or 1" >&2; exit 1 ;;

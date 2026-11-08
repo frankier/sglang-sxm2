@@ -1,0 +1,49 @@
+{
+  "native_image_tokens": 7950,
+  "mtp_steps": 0,
+  "cached_follow_up": true,
+  "anthropic": {
+    "stop_reason": "end_turn",
+    "usage": {
+      "input_tokens": 8031,
+      "output_tokens": 1383
+    }
+  },
+  "job": 2945107,
+  "artifact_root": "/home/robefran/sglang-issue1-20261108/results/mtp-2945107",
+  "openai": [
+    {
+      "usage": {
+        "prompt_tokens": 8031,
+        "total_tokens": 9425,
+        "completion_tokens": 1394,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "image_tokens": 7950
+        },
+        "reasoning_tokens": 732
+      },
+      "finish_reason": "stop",
+      "ttft_s": 23.00910932396073,
+      "elapsed_s": 37.17620236892253
+    },
+    {
+      "usage": {
+        "prompt_tokens": 8031,
+        "total_tokens": 9414,
+        "completion_tokens": 1383,
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "image_tokens": 7950
+        },
+        "reasoning_tokens": 724
+      },
+      "finish_reason": "stop",
+      "ttft_s": 2.436769869993441,
+      "elapsed_s": 16.494030943955295
+    }
+  ],
+  "scheduler_cached_tokens_on_follow_up": 8000,
+  "api_cache_reporting_enabled": false,
+  "pixel_ipc": "disk-backed validation-only shim; normal NCCL IPC"
+}

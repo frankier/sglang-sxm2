@@ -1,6 +1,7 @@
 import sys
 from types import SimpleNamespace
 from unittest.mock import Mock
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -9,10 +10,100 @@ from einops import rearrange
 
 from sglang.srt.layers.attention import vision
 from sglang.test.ci.ci_register import register_cpu_ci, register_npu_ci
+from sglang.test.test_utils import CustomTestCase
 
 register_cpu_ci(est_time=12, suite="base-a-test-cpu")
 register_npu_ci(est_time=2, suite="base-b-test-1-npu-a3")
 register_npu_ci(est_time=2, suite="nightly-1-npu-a3", nightly=True)
+
+
+class TestPackedSdpaMemory(CustomTestCase):
+    def test_chunked_frames_match_dense_attention_and_remain_isolated(self):
+        """Native document frames must not allocate a square mask or score matrix."""
+        torch.manual_seed(7)
+        lengths = (5, 9)
+        heads, dim = 2, 8
+        q, k, v = [torch.randn(sum(lengths), heads, dim) for _ in range(3)]
+        frame_ids = torch.repeat_interleave(torch.arange(2), torch.tensor(lengths))
+        mask = frame_ids[:, None] == frame_ids[None, :]
+        scale = 0.37
+        expected = (
+            F.scaled_dot_product_attention(
+                q.transpose(0, 1).unsqueeze(0),
+                k.transpose(0, 1).unsqueeze(0),
+                v.transpose(0, 1).unsqueeze(0),
+                attn_mask=mask,
+                scale=scale,
+            )
+            .squeeze(0)
+            .transpose(0, 1)
+        )
+        layer = vision.VisionSdpaAttention(
+            head_dim=dim,
+            num_heads=heads,
+            num_kv_heads=heads,
+            flatten_batch=True,
+            softmax_scale=scale,
+        )
+        layer._MAX_SCORE_BYTES = 128
+        sdpa = F.scaled_dot_product_attention
+
+        def bounded_sdpa(queries, keys, values, **kwargs):
+            self.assertIsNone(kwargs.get("attn_mask"))
+            self.assertLessEqual(
+                queries.shape[1] * queries.shape[2] * keys.shape[2] * 4,
+                layer._MAX_SCORE_BYTES,
+            )
+            return sdpa(queries, keys, values, **kwargs)
+
+        with patch.object(vision.F, "scaled_dot_product_attention", bounded_sdpa):
+            actual = layer(q, k, v, bsz=1, cu_seqlens=torch.tensor([0, 5, 14]))
+        torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-6)
+        changed = v.clone()
+        changed[5:] += 100
+        other = layer(q, k, changed, bsz=1, cu_seqlens=torch.tensor([0, 5, 14]))
+        torch.testing.assert_close(other[:5], actual[:5], atol=0, rtol=0)
+        torch.testing.assert_close(other[5:], actual[5:] + 100, atol=2e-5, rtol=1e-6)
+
+    def test_single_frame_matches_unmasked_sdpa_and_rejects_invalid_partition(self):
+        torch.manual_seed(8)
+        q, k, v = [torch.randn(11, 2, 8) for _ in range(3)]
+        layer = vision.VisionSdpaAttention(
+            head_dim=8,
+            num_heads=2,
+            num_kv_heads=2,
+            flatten_batch=True,
+        )
+        layer._MAX_SCORE_BYTES = 128
+        expected = F.scaled_dot_product_attention(
+            q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1)
+        ).transpose(0, 1)
+        sdpa = F.scaled_dot_product_attention
+
+        def bounded_sdpa(queries, keys, values, **kwargs):
+            self.assertIsNone(kwargs.get("attn_mask"))
+            self.assertLessEqual(
+                queries.shape[1] * queries.shape[2] * keys.shape[2] * 4,
+                layer._MAX_SCORE_BYTES,
+            )
+            return sdpa(queries, keys, values, **kwargs)
+
+        with patch.object(vision.F, "scaled_dot_product_attention", bounded_sdpa):
+            for cu in (None, torch.tensor([0, 11])):
+                actual = layer(q, k, v, bsz=1, cu_seqlens=cu)
+                torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-6)
+        with self.assertRaisesRegex(ValueError, "partition"):
+            layer(q, k, v, bsz=1, cu_seqlens=torch.tensor([0, 12]))
+
+        valid = torch.arange(11) < 10
+        expected = F.scaled_dot_product_attention(
+            q.transpose(0, 1),
+            k.transpose(0, 1),
+            v.transpose(0, 1),
+            attn_mask=valid[:, None] & valid[None, :],
+        ).transpose(0, 1)
+        actual = layer(q, k, v, bsz=1, cu_seqlens=torch.tensor([0, 10]))
+        torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-6)
 
 
 @pytest.fixture

@@ -47,9 +47,17 @@ before starting the server.
 
 The wrapper enables the existing GLM vision processor and tower with FP16
 activations and `--mm-attention-backend sdpa` on V100. It defaults to
-`GLM53_MAX_IMAGE_TOKENS=1024` per image to bound vision attention memory; the
-processor resizes larger images. You can raise this limit if you have memory
-available. The checkpoint's exclusion list keeps the vision tower unquantized.
+`GLM53_MAX_IMAGE_TOKENS=8000` per image, the checkpoint-native budget. The
+checkpoint processor keeps its normal geometry rules; the server adds no lower
+resolution fallback. GLM preprocessing runs on CPU with one background worker
+by default. On Volta, the encoder stages one frame at a time and packed SDPA
+chunks queries against every key in that frame. This preserves full-frame
+softmax and frame isolation without allocating a square attention mask. The
+checkpoint's exclusion list keeps the vision tower unquantized.
+
+`GLM53_MAX_IMAGES=4` bounds image packs. Larger packs receive HTTP 400 before
+tensor-parallel dispatch, and subsequent valid requests remain usable. Raising
+this limit or the processor worker count requires another capacity check.
 
 Send an OpenAI image URL or an inline PNG/JPEG data URL:
 
@@ -74,7 +82,9 @@ including a 1120×1120 image resized to the 1,024-token limit. The initial check
 used an 8,192-token context and a 16,384-token KV pool. The checks also passed
 at the full memory settings below, including MTP with FP8 E4M3 KV.
 
-The wrapper uses separate vision context defaults that fit the measured pools:
+The following pool allocations were measured with the earlier 1,024-token
+image smoke checks; they do not establish native-page capacity at those context
+lengths. The wrapper retains these context defaults:
 
 | Vision recipe | Memory fraction | Measured KV pool | Default context |
 |---|---:|---:|---:|
@@ -83,10 +93,114 @@ The wrapper uses separate vision context defaults that fit the measured pools:
 | MTP 3 steps, FP8 E4M3 KV | 0.945 | 394,752 | 384,000 |
 
 These are allocation and image smoke checks, not long-context accuracy or
-throughput measurements. Recheck capacity if you change the memory fraction or
-Mamba slots. If image processing runs out of memory, lower
-`GLM53_MAX_IMAGE_TOKENS` or `GLM53_MEM_FRACTION`. Use
+throughput measurements. For the validated native-page workload, use the
+131,072-token no-MTP profile below. Recheck capacity when changing context,
+memory fraction, Mamba slots, or image admission limits. Use
 `GLM53_LANGUAGE_ONLY=1` to retain the original text-only context defaults.
+
+## Native document validation (2026-11-08)
+
+[Issue #1](https://github.com/frankier/sglang-sxm2/issues/1) reproduced two
+separate allocations: GPU image resizing and dense vision attention. CPU
+preprocessing and bounded full-key query attention fix these without reducing
+the native 8,000-token image budget. The original 8300×5834 page now reports
+7,950 image tokens (31,800 patches), completes normally, and no longer kills
+TP workers. A final-code no-MTP follow-up passed two OpenAI requests for
+this page and an Anthropic request with a complete answer. The scheduler
+reported 8,000 cached prompt tokens on the repeated request. API cache reporting
+was disabled, so its cached-token counter remained zero; add
+`--enable-cache-report` when you need that API counter. Four such frames in one request also completed with correct color
+ordering and 31,800 total image tokens. Unequal frame packs and repeated mixed
+image requests passed; a five-image request was rejected with HTTP 400 before
+successful follow-ups.
+
+Run the validated profile with:
+
+```bash
+export GLM53_MODEL=~/models/GLM-5.3-Flash-NVFP4
+export GLM53_LANGUAGE_ONLY=0
+export GLM53_MAX_IMAGE_TOKENS=8000
+export GLM53_MAX_IMAGES=4
+export GLM53_KV_CACHE_DTYPE=auto
+export GLM53_MTP_STEPS=0
+export GLM53_CONTEXT_LENGTH=131072
+export GLM53_MEM_FRACTION=0.88
+export GLM53_MAX_RUNNING=4
+export GLM53_MAMBA_SLOTS=20
+export GLM53_CUDA_GRAPH_BS_DECODE="1 2 4"
+export GLM53_EXTRA_ARGS="--max-total-tokens 131072"
+bash scripts/serve_glm53_flash_nvfp4_v100.sh
+```
+
+The single-client baseline used one active request, 12 Mamba slots and decode
+graph batch size 1. All runs used TP8/EP1, FP16 activations and KV, no CPU weight
+offload, SDPA vision, and 4,096-token prefill chunks. Hardware was eight
+V100-SXM2-32GB GPUs on `dgx1-02`, driver 580.178.04, PyTorch 2.9.1+cu128,
+Transformers 5.17.0 and Tokenizers 0.23.1. Checkpoint revision:
+`f46cf340d35a22d0d83d0c1dac8957cf2b1bcd35`.
+
+Each cohort used the same 16 OmniDocBench pages and original image bytes,
+temperature 0, low reasoning effort and 8,192 output tokens. There were no
+retries, output caps, loop guards, empty answers or missing usage: **80/80
+responses completed**, and the unchanged official evaluator scored all 16
+pages in every cohort.
+
+| Connected clients | Observed active decode | Estimated overlapping output spans | Valid pages | Full-cohort tok/s | Median TTFT (s) | Max TTFT (s) | Highest sampled GPU MiB |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 1 | 1 | 16/16 | 63.23 | 6.49 | 21.78 | 30,148 |
+| 2 | 2 | 2 | 16/16 | 84.30 | 6.82 | 22.00 | 30,392 |
+| 4 | 4 | 4 | 16/16 | 97.51 | 14.83 | 37.66 | 30,392 |
+| 6 | 4 | 4 | 16/16 | 106.94 | 29.37 | 46.46 | 30,648 |
+| 8 | 4 | 4 | 16/16 | 107.94 | 46.06 | 68.97 | 30,648 |
+
+Throughput is total API usage completion tokens, including reasoning, divided
+by full cohort elapsed time. It is not SSE event count or decode-only speed.
+Active decode counts come from scheduler logs. Output overlap is an estimate
+using response-file completion timestamps and client elapsed/TTFT/decode
+measurements; absolute request starts were not recorded. Output spans include
+stalls. GPU memory was sampled every 200 ms, rather than measured as exact
+allocator peaks. The single-client run followed the failure replay, and later
+cohorts reused the four-active-request server; these are acceptance runs with
+warm-cache effects, not a cold-cache throughput comparison. Six and eight
+clients queue above four active requests.
+
+Official scores (edit distances lower is better; CDM/TEDS higher is better):
+
+| Clients | Text edit | Formula edit | Formula CDM | Table TEDS | Structure TEDS | Table edit | Reading-order edit |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1, 2, 6, 8 | 0.058210 | 0.185039 | 0.989333 | 0.538981 | 0.575954 | 0.314073 | 0.274212 |
+| 4 | 0.055162 | 0.185039 | 0.989333 | 0.538137 | 0.575130 | 0.313952 | 0.274212 |
+
+The evaluator reported no match/CDM/TEDS timeouts or fallback pages. Small
+batch-dependent output differences remain; exact text identity across batch
+sizes is not claimed. The V100 attention regression compares FP16 packed,
+unequal frames against dense masked attention at `atol=rtol=1e-3` (maximum
+absolute difference 0.0009765625). The 31,800-patch case used 91.7 MiB peak
+allocated attention-test memory, with maximum sampled-query difference
+0.00001526. A two-layer random-weight vision encoder also matched batched and
+frame-staged execution within `1e-3`; this is an operator check, not a second
+checkpoint accuracy evaluation. CPU regressions use `1e-6` tolerances and
+verify that changing one frame cannot affect another.
+
+Run the GPU regression independently of a checkpoint:
+
+```bash
+python test/manual/test_glm53_native_vision_attention.py
+```
+
+[Machine-readable results](../../benchmark/glm53_native_vision_20261108/summary.json)
+include per-rank sampled memory, usage, hashes, metrics and artifact locations.
+Raw requests, server logs, telemetry, evaluator outputs and baseline health
+bundles are retained in
+`robefran@turso.cs.helsinki.fi:~/sglang-issue1-20261108/results/run-2945071`.
+The original failed runs under
+`~/llmturso-work/results/sglang-sxm2-vision/` remain intact. These native-page
+results cover the no-MTP profile above; the earlier MTP/small-image smoke
+checks do not establish native-page MTP capacity or long-context accuracy. An
+additional MTP=3 startup attempt in this validation failed before serving, in
+draft NVFP4 scale preparation (`NVFP4 block scales must be non-negative`); its
+logs are retained under `results/mtp-2945090`. Use the tested no-MTP profile
+for this document workload.
 
 ## Measured performance
 
@@ -199,7 +313,8 @@ python -m sglang.launch_server \
   --quantization modelopt_fp4 \
   --fp4-gemm-backend marlin \
   --mm-attention-backend sdpa \
-  --mm-process-config '{"image":{"max_image_tokens":1024}}' \
+  --mm-process-config '{"image":{"max_image_tokens":8000}}' \
+  --limit-mm-data-per-request '{"image":4}' \
   --tensor-parallel-size 8 \
   --ep-size 1 \
   --attention-backend dsa \

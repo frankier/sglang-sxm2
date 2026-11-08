@@ -1,0 +1,434 @@
+{
+  "issue": "https://github.com/frankier/sglang-sxm2/issues/1",
+  "date": "2026-11-08",
+  "host": "dgx1-02",
+  "gpu": "8 x V100-SXM2-32GB",
+  "base_commit": "39fedda02d1e117b9b800484d1f8bd736a6bd22b",
+  "checkpoint_revision": "f46cf340d35a22d0d83d0c1dac8957cf2b1bcd35",
+  "dataset_revision": "aa1ee96d106dbe53d0ae59474d75c6e6d9b53fec",
+  "subset_sha256": "67d0c88f10ec8daaf9d92cd76a132310e7f5bfb9dcd584d553e8526cdf3ded9a",
+  "evaluator_revision": "ea2d138c7d2e185feb71ef8014e97d7206820b34",
+  "artifact_root": "robefran@turso.cs.helsinki.fi:~/sglang-issue1-20261108/results/run-2945071",
+  "protocol": {
+    "pages": 16,
+    "max_tokens": 8192,
+    "temperature": 0,
+    "reasoning_effort": "low",
+    "max_image_tokens": 8000,
+    "max_images": 4,
+    "tp": 8,
+    "ep": 1,
+    "mtp": 0,
+    "context_length": 131072,
+    "max_total_tokens": 131072,
+    "chunked_prefill_size": 4096,
+    "max_prefill_tokens": 4096,
+    "mem_fraction_static": 0.88,
+    "kv_dtype": "fp16",
+    "cpu_weight_offload": false,
+    "image_input": "original bytes and geometry; no client resize/crop",
+    "retries": 0,
+    "loop_guards": false
+  },
+  "cohorts": [
+    {
+      "connected_clients": 1,
+      "configured_active_limit": 1,
+      "observed_max_decode_running_requests": 1,
+      "estimated_max_overlapping_output_spans": 1,
+      "health": {
+        "pages": 16,
+        "valid_final": 16,
+        "http_or_stream_errors": 0,
+        "truncated": 0,
+        "missing_usage": 0,
+        "empty_final": 0,
+        "not_attempted": 0,
+        "missing_response": 0,
+        "resumed": false
+      },
+      "elapsed_s": 296.2482930260012,
+      "completion_tokens": 18732,
+      "full_cohort_usage_tokens_per_s": 63.23074407843398,
+      "ttft_s": {
+        "median": 6.487282737973146,
+        "p95_nearest_rank": 21.775192011962645,
+        "max": 21.775192011962645
+      },
+      "image_tokens_per_page": [
+        2184,
+        3796,
+        3796,
+        3888,
+        3888,
+        4446,
+        4680,
+        4819,
+        4860,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        7950
+      ],
+      "sampled_device_memory_peak_mib_by_rank": {
+        "0": 30076,
+        "1": 30148,
+        "2": 29856,
+        "3": 29848,
+        "4": 30100,
+        "5": 30136,
+        "6": 29988,
+        "7": 29896
+      },
+      "official_metrics": {
+        "text_edit": 0.05820952447503044,
+        "formula_edit": 0.18503937007874016,
+        "formula_cdm": 0.9893333333333333,
+        "table_teds": 0.5389810391863205,
+        "table_structure_teds": 0.5759537428562407,
+        "table_edit": 0.31407301809982247,
+        "reading_order_edit": 0.2742124044433827
+      },
+      "metric_sha256": "df921508513dc11112230bcf0cd65dfbfe367abe95e3cd949d056ca2043b99f9"
+    },
+    {
+      "connected_clients": 2,
+      "configured_active_limit": 4,
+      "observed_max_decode_running_requests": 2,
+      "estimated_max_overlapping_output_spans": 2,
+      "health": {
+        "pages": 16,
+        "valid_final": 16,
+        "http_or_stream_errors": 0,
+        "truncated": 0,
+        "missing_usage": 0,
+        "empty_final": 0,
+        "not_attempted": 0,
+        "missing_response": 0,
+        "resumed": false
+      },
+      "elapsed_s": 222.20993484801147,
+      "completion_tokens": 18732,
+      "full_cohort_usage_tokens_per_s": 84.2986611413771,
+      "ttft_s": {
+        "median": 6.819004136545118,
+        "p95_nearest_rank": 21.99953639495652,
+        "max": 21.99953639495652
+      },
+      "image_tokens_per_page": [
+        2184,
+        3796,
+        3796,
+        3888,
+        3888,
+        4446,
+        4680,
+        4819,
+        4860,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        7950
+      ],
+      "sampled_device_memory_peak_mib_by_rank": {
+        "0": 30320,
+        "1": 30392,
+        "2": 30100,
+        "3": 30092,
+        "4": 30344,
+        "5": 30380,
+        "6": 30232,
+        "7": 30140
+      },
+      "official_metrics": {
+        "text_edit": 0.05820952447503044,
+        "formula_edit": 0.18503937007874016,
+        "formula_cdm": 0.9893333333333333,
+        "table_teds": 0.5389810391863205,
+        "table_structure_teds": 0.5759537428562407,
+        "table_edit": 0.31407301809982247,
+        "reading_order_edit": 0.2742124044433827
+      },
+      "metric_sha256": "df921508513dc11112230bcf0cd65dfbfe367abe95e3cd949d056ca2043b99f9"
+    },
+    {
+      "connected_clients": 4,
+      "configured_active_limit": 4,
+      "observed_max_decode_running_requests": 4,
+      "estimated_max_overlapping_output_spans": 4,
+      "health": {
+        "pages": 16,
+        "valid_final": 16,
+        "http_or_stream_errors": 0,
+        "truncated": 0,
+        "missing_usage": 0,
+        "empty_final": 0,
+        "not_attempted": 0,
+        "missing_response": 0,
+        "resumed": false
+      },
+      "elapsed_s": 191.76435263594612,
+      "completion_tokens": 18698,
+      "full_cohort_usage_tokens_per_s": 97.50508758787461,
+      "ttft_s": {
+        "median": 14.83320512046339,
+        "p95_nearest_rank": 37.65909874695353,
+        "max": 37.65909874695353
+      },
+      "image_tokens_per_page": [
+        2184,
+        3796,
+        3796,
+        3888,
+        3888,
+        4446,
+        4680,
+        4819,
+        4860,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        7950
+      ],
+      "sampled_device_memory_peak_mib_by_rank": {
+        "0": 30320,
+        "1": 30392,
+        "2": 30100,
+        "3": 30092,
+        "4": 30344,
+        "5": 30380,
+        "6": 30232,
+        "7": 30140
+      },
+      "official_metrics": {
+        "text_edit": 0.05516210363364498,
+        "formula_edit": 0.18503937007874016,
+        "formula_cdm": 0.9893333333333333,
+        "table_teds": 0.5381370397170844,
+        "table_structure_teds": 0.5751299051242175,
+        "table_edit": 0.3139523448271645,
+        "reading_order_edit": 0.2742124044433827
+      },
+      "metric_sha256": "65119f865d1365605f3332979772386eb916b0b2c76c88d8e6ceb05ec2016c3d"
+    },
+    {
+      "connected_clients": 6,
+      "configured_active_limit": 4,
+      "observed_max_decode_running_requests": 4,
+      "estimated_max_overlapping_output_spans": 4,
+      "health": {
+        "pages": 16,
+        "valid_final": 16,
+        "http_or_stream_errors": 0,
+        "truncated": 0,
+        "missing_usage": 0,
+        "empty_final": 0,
+        "not_attempted": 0,
+        "missing_response": 0,
+        "resumed": false
+      },
+      "elapsed_s": 175.1471417050343,
+      "completion_tokens": 18730,
+      "full_cohort_usage_tokens_per_s": 106.93865636439124,
+      "ttft_s": {
+        "median": 29.365020240540616,
+        "p95_nearest_rank": 46.459506636019796,
+        "max": 46.459506636019796
+      },
+      "image_tokens_per_page": [
+        2184,
+        3796,
+        3796,
+        3888,
+        3888,
+        4446,
+        4680,
+        4819,
+        4860,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        7950
+      ],
+      "sampled_device_memory_peak_mib_by_rank": {
+        "0": 30576,
+        "1": 30648,
+        "2": 30356,
+        "3": 30348,
+        "4": 30600,
+        "5": 30636,
+        "6": 30488,
+        "7": 30396
+      },
+      "official_metrics": {
+        "text_edit": 0.05820952447503044,
+        "formula_edit": 0.18503937007874016,
+        "formula_cdm": 0.9893333333333333,
+        "table_teds": 0.5389810391863205,
+        "table_structure_teds": 0.5759537428562407,
+        "table_edit": 0.31407301809982247,
+        "reading_order_edit": 0.2742124044433827
+      },
+      "metric_sha256": "df921508513dc11112230bcf0cd65dfbfe367abe95e3cd949d056ca2043b99f9"
+    },
+    {
+      "connected_clients": 8,
+      "configured_active_limit": 4,
+      "observed_max_decode_running_requests": 4,
+      "estimated_max_overlapping_output_spans": 4,
+      "health": {
+        "pages": 16,
+        "valid_final": 16,
+        "http_or_stream_errors": 0,
+        "truncated": 0,
+        "missing_usage": 0,
+        "empty_final": 0,
+        "not_attempted": 0,
+        "missing_response": 0,
+        "resumed": false
+      },
+      "elapsed_s": 173.54498454893474,
+      "completion_tokens": 18732,
+      "full_cohort_usage_tokens_per_s": 107.93743218040456,
+      "ttft_s": {
+        "median": 46.05629052052973,
+        "p95_nearest_rank": 68.96569050196558,
+        "max": 68.96569050196558
+      },
+      "image_tokens_per_page": [
+        2184,
+        3796,
+        3796,
+        3888,
+        3888,
+        4446,
+        4680,
+        4819,
+        4860,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        5040,
+        7950
+      ],
+      "sampled_device_memory_peak_mib_by_rank": {
+        "0": 30576,
+        "1": 30648,
+        "2": 30356,
+        "3": 30348,
+        "4": 30600,
+        "5": 30636,
+        "6": 30488,
+        "7": 30396
+      },
+      "official_metrics": {
+        "text_edit": 0.05820952447503044,
+        "formula_edit": 0.18503937007874016,
+        "formula_cdm": 0.9893333333333333,
+        "table_teds": 0.5389810391863205,
+        "table_structure_teds": 0.5759537428562407,
+        "table_edit": 0.31407301809982247,
+        "reading_order_edit": 0.2742124044433827
+      },
+      "metric_sha256": "df921508513dc11112230bcf0cd65dfbfe367abe95e3cd949d056ca2043b99f9"
+    }
+  ],
+  "notes": [
+    "Throughput divides API usage completion tokens (including reasoning) by full cohort elapsed time; not SSE event count or decode-only throughput.",
+    "Output span overlap is estimated using raw-response file mtime minus client elapsed time plus TTFT, through decode_s. Client did not record absolute request start. This includes file-write delay and output stalls; scheduler logs measure actual active decode separately.",
+    "Device memory is nvidia-smi sampled every 200 ms, not an exact allocator peak; rank maps to local GPU index.",
+    "Each cohort scored all 16 pages with the unchanged official evaluator, including any failures (none). No matching/CDM/TEDS timeouts or fallback pages.",
+    "Single-client cohort follows the exact-image replay; later cohorts reuse the active4 server and may have warm caches. These are acceptance runs, not cold-cache throughput comparisons.",
+    "Original failed runs remain under ~/llmturso-work/results/sglang-sxm2-vision/.",
+    "Full native cohorts used POSIX shared-memory transport. The final follow-up redirects only large CPU pixel segments to task disk-backed storage; binding all of /dev/shm was incompatible with NCCL."
+  ],
+  "checks": {
+    "cpu_attention_unit_tests": 18,
+    "cpu_processor_unit_tests": 11,
+    "v100_manual_attention_tests": 2,
+    "native_attention_peak_allocated_bytes": 96126976,
+    "native_attention_sampled_query_max_abs_error": 1.52587890625e-05,
+    "packed_attention_max_abs_error": 0.0009765625,
+    "fp16_tolerance": {
+      "atol": 0.001,
+      "rtol": 0.001
+    },
+    "cpu_tolerance": {
+      "atol": 1e-06,
+      "rtol": 1e-06
+    },
+    "tiny_random_encoder_max_abs_error": 0.000244140625,
+    "native_packed_four_image_tokens": 31800,
+    "five_image_rejection_http_status": 400,
+    "valid_after_rejection": true
+  },
+  "source_notes": [
+    "Main acceptance run precedes a trailing-padding compatibility adjustment in VisionSdpaAttention. Native unpadded execution is identical. Final code passed the 18-test CPU attention suite and the two V100 attention tests. Final-code checkpoint follow-up job 2945107 also passed both native OpenAI requests (with scheduler-confirmed cache reuse) and the native Anthropic request.",
+    "Compiled libraries were reused only after unchanged native AOT/patch/build inputs were compared against the container source revision. Python and JIT source were bound from the task snapshot."
+  ],
+  "native_build_base_commit": "73abfe1",
+  "source_sha256": {
+    "python/sglang/srt/layers/attention/vision.py": "dc57abc4a52ff01ce234bfb8519bed087adb5fa1158111e92f19ef24bfccb105",
+    "python/sglang/srt/models/glm5_next.py": "e376171cc1c8c09a037b67595a4ebbdfda534f87d090bd151afe985304ece897",
+    "python/sglang/srt/multimodal/processors/base_processor.py": "7ffa7644472c1a3369d073b2ef00d22a46e84b61cb760bb342c9c77786f4df86",
+    "python/sglang/srt/multimodal/processors/glm4v.py": "35ef84cbbbf606d4fea9135ee60db1a21de8fddac011bff41cb4d3b09b03f661",
+    "scripts/serve_glm53_flash_nvfp4_v100.sh": "37a65ca3aff45cc1a1fad461c7a48c431aca6996208ded66d8306e0bb11a3905"
+  },
+  "additional_attempts": [
+    {
+      "job": 2945090,
+      "profile": "extra MTP 3 smoke check, not part of issue acceptance",
+      "result": "failed during draft-weight loading before requests",
+      "error": "ValueError: NVFP4 block scales must be non-negative"
+    },
+    {
+      "jobs": [
+        2945096,
+        2945100
+      ],
+      "profile": "extra smoke checks with whole /dev/shm bound to disk",
+      "result": "NCCL initialization failed before model loading",
+      "note": "Incompatible test IPC configuration; preserved logs. Final follow-up redirects only CPU pixel segments to disk."
+    },
+    {
+      "job": 2945102,
+      "profile": "final-code no-MTP native repeated page, disk-backed pixel IPC",
+      "result": "both requests completed; harness stopped before Anthropic due to an incorrect API cache-counter assertion",
+      "native_image_tokens": [
+        7950,
+        7950
+      ],
+      "scheduler_cached_tokens_on_follow_up": 8000,
+      "api_cached_tokens": [
+        0,
+        0
+      ],
+      "note": "API cache reporting was disabled (the normal default); scheduler evidence confirms actual reuse. No feature failure."
+    }
+  ],
+  "full_run_sampled_device_memory_peak_mib_by_rank": {
+    "0": 30576,
+    "1": 30648,
+    "2": 30356,
+    "3": 30348,
+    "4": 30600,
+    "5": 30636,
+    "6": 30488,
+    "7": 30396
+  },
+  "final_code_follow_up": "follow-up-summary.json"
+}

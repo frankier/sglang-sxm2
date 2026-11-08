@@ -6,6 +6,8 @@ each drive their own GPU, which no process-global value can express — the
 device has to come from what the worker was handed.
 """
 
+import asyncio
+import threading
 import unittest
 from contextlib import nullcontext
 from types import SimpleNamespace
@@ -29,6 +31,13 @@ class _Processor:
 class _StubProcessor(BaseMultimodalProcessor):
     async def process_mm_data_async(self, *args, **kwargs):
         raise NotImplementedError
+
+
+class _BackgroundProcessor(_StubProcessor):
+    offload_single_mm_processor = True
+
+    def process_and_combine_mm_data(self, *args, processor=None, **kwargs):
+        return threading.get_ident()
 
 
 def _make(**fields):
@@ -65,6 +74,33 @@ class TestFastImageProcessorDevice(CustomTestCase):
 
     def test_device_follows_the_instance_base_gpu_id(self):
         self.assertEqual(self._device(_make(base_gpu_id=3)), "cuda:3")
+
+    def test_glm53_native_resize_stays_on_cpu_on_a_cuda_platform(self):
+        from sglang.srt.multimodal.processors.glm4v import Glm5NextImageProcessor
+
+        processor = Glm5NextImageProcessor.__new__(Glm5NextImageProcessor)
+        processor.server_args = _make(base_gpu_id=3).server_args
+        self.assertEqual(self._device(processor), "cpu")
+
+    def test_single_cpu_preprocessing_worker_does_not_run_on_event_loop(self):
+        args = ServerArgs(
+            model_path="dummy",
+            mm_process_config={},
+            mm_processor_worker_num=1,
+            mm_preprocess_cache_size_mb=0,
+            mm_feature_transport="cpu",
+        )
+        publish(args, role="tokenizer")
+        processor = _BackgroundProcessor(SimpleNamespace(), args, _Processor(), "cpu")
+        self.addCleanup(processor.shutdown)
+
+        async def run():
+            loop_thread = threading.get_ident()
+            work_thread = await processor.process_and_combine_mm_data_async(None, None)
+            return loop_thread, work_thread
+
+        loop_thread, work_thread = asyncio.run(run())
+        self.assertNotEqual(loop_thread, work_thread)
 
     def test_engines_in_one_process_keep_their_own_device(self):
         first, second = _make(base_gpu_id=0), _make(base_gpu_id=5)

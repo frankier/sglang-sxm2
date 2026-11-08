@@ -442,7 +442,6 @@ class Glm4vImageProcessor(SGLangBaseProcessor):
         for m in [
             Glm4vForConditionalGeneration,
             Glm4vMoeForConditionalGeneration,
-            Glm5NextForConditionalGeneration,
             GlmOcrForConditionalGeneration,
         ]
         if m is not None
@@ -650,3 +649,19 @@ class Glm4vImageProcessor(SGLangBaseProcessor):
             mrope_positions=mrope_positions,
             mrope_position_delta=mrope_position_delta,
         )
+
+
+class Glm5NextImageProcessor(Glm4vImageProcessor):
+    """Keep native document decoding/resizing off the serving accelerator."""
+
+    models = (
+        [Glm5NextForConditionalGeneration]
+        if Glm5NextForConditionalGeneration is not None
+        else []
+    )
+    gpu_image_decode = False
+    auto_mm_processor_worker_num = 1
+    offload_single_mm_processor = True
+
+    def _fast_image_processor_device(self, processor):
+        return "cpu"

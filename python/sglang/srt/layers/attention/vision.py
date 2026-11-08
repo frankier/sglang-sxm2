@@ -290,6 +290,10 @@ class VisionSdpaAttention(nn.Module):
 
     """
 
+    # PyTorch's math SDPA backend can hold several FP32 score/softmax buffers.
+    # Bound each score matrix even on devices without a fused SDPA kernel.
+    _MAX_SCORE_BYTES = 32 * 1024 * 1024
+
     def __init__(
         self,
         head_dim: int,
@@ -313,6 +317,48 @@ class VisionSdpaAttention(nn.Module):
             if softmax_scale is not None
             else 1.0 / math.sqrt(self.head_size)
         )
+
+    def _forward_packed(self, q, k, v, cu_seqlens):
+        """Attend each packed frame independently, with full keys per query chunk."""
+        boundaries = cu_seqlens.tolist() if cu_seqlens is not None else [0, q.shape[0]]
+        if (
+            not boundaries
+            or boundaries[0] != 0
+            or boundaries[-1] > q.shape[0]
+            or any(end < start for start, end in zip(boundaries, boundaries[1:]))
+        ):
+            raise ValueError(
+                "Packed vision cu_seqlens must partition valid input tokens"
+            )
+        # Packed graph/batch inputs can end in padding. Its rows were fully
+        # masked by the dense implementation and SDPA returned zeros there.
+        output = (
+            torch.zeros_like(q) if boundaries[-1] < q.shape[0] else torch.empty_like(q)
+        )
+        for start, end in zip(boundaries, boundaries[1:]):
+            if start == end:
+                continue
+            keys = k[start:end].transpose(0, 1).unsqueeze(0)
+            values = v[start:end].transpose(0, 1).unsqueeze(0)
+            # The math backend accumulates FP16/BF16 inputs in FP32. Queries
+            # are independent; splitting keys instead would change softmax.
+            score_bytes_per_query = (
+                self.num_heads * (end - start) * max(q.element_size(), 4)
+            )
+            chunk_size = max(1, self._MAX_SCORE_BYTES // score_bytes_per_query)
+            for offset in range(start, end, chunk_size):
+                stop = min(offset + chunk_size, end)
+                queries = q[offset:stop].transpose(0, 1).unsqueeze(0)
+                result = F.scaled_dot_product_attention(
+                    queries,
+                    keys,
+                    values,
+                    dropout_p=0.0,
+                    is_causal=False,
+                    scale=self.scale,
+                )
+                output[offset:stop] = result.squeeze(0).transpose(0, 1)
+        return output
 
     @staticmethod
     @lru_cache(maxsize=128)
@@ -390,6 +436,17 @@ class VisionSdpaAttention(nn.Module):
             assert bsz == 1, "flatten_batch is True, bsz must be 1"
 
         assert q.dim() == 3, q.shape
+
+        if (
+            self.flatten_batch
+            and attention_mask is None
+            and not self.softmax_in_single_precision
+            and self.dropout == 0.0
+        ):
+            metadata = kwargs.get("forward_metadata")
+            if cu_seqlens is None and metadata is not None:
+                cu_seqlens = metadata.cu_seqlens
+            return self._forward_packed(q, k, v, cu_seqlens)
 
         s = q.shape[0] // bsz
 

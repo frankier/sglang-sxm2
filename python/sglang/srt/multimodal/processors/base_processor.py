@@ -225,6 +225,9 @@ class BaseMultimodalProcessor(ABC):
     # model that measured its own optimum assigns a number instead. See
     # `_resolve_auto_mm_processor_worker_num`.
     auto_mm_processor_worker_num = None
+    # Large CPU document preprocessing must not block streaming/control IO,
+    # even when its memory budget permits only one worker.
+    offload_single_mm_processor = False
     auto_mm_io_worker_num = 4
     # Models opt in by assigning a non-zero default. A user-provided server
     # argument overrides this value; zero disables storage and cache-key work.
@@ -358,7 +361,9 @@ class BaseMultimodalProcessor(ABC):
             )
             self.mm_processor_worker_num = 1
         self.mm_processor_executor = None
-        if self.mm_processor_worker_num > 1:
+        if self.mm_processor_worker_num > 1 or (
+            self.offload_single_mm_processor and not skip_mm_pool
+        ):
             try:
                 # A callable, not the object: subclasses finish customizing
                 # `_processor` after this returns, and the workers must clone it
