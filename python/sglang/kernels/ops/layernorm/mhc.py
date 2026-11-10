@@ -1909,6 +1909,8 @@ def hc_contract(x: torch.Tensor, n: int) -> torch.Tensor:
 
 # Measured to win at decode sizes only; prefill keeps the cuBLAS mix GEMM.
 _GLM_SM70_PRE_FUSED_MAX_TOKENS = 64
+# A 1024-row FP32 tile at width 16384 uses 64 MiB of projection workspace.
+_GLM_SM70_PREFILL_MIX_ROWS = 1024
 
 
 def _is_glm_sm70_hc(
@@ -2003,12 +2005,25 @@ def _mhc_pre_torch(
             float(hc_sinkhorn_eps),
         )
 
-    x_flat = residual.view(s, n * h).float()
-    rsqrt = torch.rsqrt(x_flat.square().mean(-1, keepdim=True) + rms_eps)
-    mixes = F.linear(x_flat, fn) * rsqrt
-
+    x_flat = residual.view(s, n * h)
     if glm_sm70:
         from sglang.kernels.ops.elementwise.sm70_glm_hc import glm_hc_pre
+
+        # Keep the FP32 cuBLAS projection. Cast one row tile at a time and
+        # reduce the FP16 residual directly with FP32 accumulation, without
+        # materializing a full FP32 residual or its elementwise square.
+        if s <= _GLM_SM70_PREFILL_MIX_ROWS:
+            mixes = F.linear(x_flat.float(), fn)
+        else:
+            mixes = fn.new_empty((s, fn.shape[0]))
+            fn_t = fn.T
+            for start in range(0, s, _GLM_SM70_PREFILL_MIX_ROWS):
+                stop = start + _GLM_SM70_PREFILL_MIX_ROWS
+                torch.mm(x_flat[start:stop].float(), fn_t, out=mixes[start:stop])
+        row_norm = torch.linalg.vector_norm(
+            x_flat, dim=-1, keepdim=True, dtype=torch.float32
+        )
+        mixes.mul_(row_norm.square_().mul_(1.0 / (n * h)).add_(rms_eps).rsqrt_())
 
         return glm_hc_pre(
             residual,
@@ -2018,6 +2033,10 @@ def _mhc_pre_torch(
             sinkhorn_repeat,
             float(hc_sinkhorn_eps),
         )
+
+    x_flat = x_flat.float()
+    rsqrt = torch.rsqrt(x_flat.square().mean(-1, keepdim=True) + rms_eps)
+    mixes = F.linear(x_flat, fn) * rsqrt
 
     pre_raw = mixes[:, :n]
     post_raw = mixes[:, n : 2 * n]
